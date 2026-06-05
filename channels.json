@@ -1,0 +1,28 @@
+{
+  "channels": [
+    {
+      "id": "ftv",
+      "name": "民視新聞台",
+      "subtitle": "FTV News · YouTube 直播",
+      "videoId": "ylYJSBUgaMA",
+      "emoji": "📡",
+      "color": "#1E3A8A"
+    },
+    {
+      "id": "set",
+      "name": "三立新聞台",
+      "subtitle": "SET News · YouTube 直播",
+      "videoId": "QsGswQvRmtU",
+      "emoji": "🗞️",
+      "color": "#5B21B6"
+    },
+    {
+      "id": "taiwan",
+      "name": "台灣最前線",
+      "subtitle": "台灣最前線 · YouTube 直播",
+      "videoId": "F8XyqtTo7Zg",
+      "emoji": "🔴",
+      "color": "#7B1313"
+    }
+  ]
+}
