@@ -86,7 +86,8 @@ function loadVideo(videoId) {
     height:  window.innerHeight,
     videoId: videoId,
     playerVars: {
-      autoplay:        1,   // 自動播放
+      autoplay:        1,
+      mute:            1,   // ★ 先靜音才能自動播放（瀏覽器政策）
       controls:        0,   // 隱藏控制列
       rel:             0,   // 不顯示相關影片
       modestbranding:  1,
@@ -96,13 +97,20 @@ function loadVideo(videoId) {
     events: {
       onReady: function(e) {
         console.log('[Receiver] Player ready → play');
-        e.target.setVolume(100);  // 確保音量最大
-        e.target.playVideo();     // 明確呼叫播放
+        e.target.playVideo();
       },
       onStateChange: function(e) {
-        // 若被暫停（某些瀏覽器安全政策）→ 強制繼續播放
+        if (e.data === YT.PlayerState.PLAYING) {
+          // ★ 真正開始播放後立即取消靜音
+          e.target.unMute();
+          e.target.setVolume(100);
+          console.log('[Receiver] Unmuted');
+        }
+        // 若被瀏覽器暫停，強制繼續
         if (e.data === YT.PlayerState.PAUSED) {
-          setTimeout(function() { ytPlayer.playVideo(); }, 500);
+          setTimeout(function() {
+            if (ytPlayer) ytPlayer.playVideo();
+          }, 500);
         }
       },
       onError: function(e) {
