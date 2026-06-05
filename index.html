@@ -12,135 +12,131 @@
     align-items: center; justify-content: center;
     width: 100vw; height: 100vh;
     background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 100%);
-    color: #fff; font-family: 'Google Sans', sans-serif;
+    color: #fff; font-family: sans-serif;
+    transition: opacity 0.5s;
   }
   #waiting .icon { font-size: 5rem; margin-bottom: 1rem; }
   #waiting h1   { font-size: 2.5rem; margin-bottom: 0.5rem; }
   #waiting p    { font-size: 1.3rem; color: rgba(255,255,255,0.5); }
 
-  /* YouTube IFrame API 會把 <iframe> 插入這裡 */
-  #player {
+  #ytFrame {
     display: none;
     position: fixed;
     top: 0; left: 0;
     width: 100vw; height: 100vh;
-  }
-  #player iframe {
-    width: 100%; height: 100%;
     border: none;
   }
 </style>
-
-<!-- 1. Cast Receiver SDK -->
 <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
-<!-- 2. YouTube IFrame API（非同步載入） -->
-<script src="https://www.youtube.com/iframe_api"></script>
 </head>
 <body>
 
 <div id="waiting">
   <div class="icon">📺</div>
-  <h1>TV 遙控器 (V1.01)</h1>
+  <h1>TV 遙控器(V1.02)</h1>
   <p>等待播放指令...</p>
 </div>
 
-<!-- YouTube IFrame API 的目標容器 -->
-<div id="player"></div>
+<!-- YouTube embed iframe（用 src 控制，不用 IFrame API） -->
+<iframe id="ytFrame"
+  allow="autoplay; fullscreen; encrypted-media"
+  allowfullscreen>
+</iframe>
 
 <script>
-// ── 設定 ──────────────────────────────────────────────────────────────────
 const NAMESPACE = 'urn:x-cast:com.example.tvremote';
+var currentVideoId = null;
+var unmuteTimer    = null;
 
-// ── 狀態 ──────────────────────────────────────────────────────────────────
-var ytPlayer    = null;   // YouTube Player 物件
-var ytReady     = false;  // IFrame API 是否就緒
-var pendingId   = null;   // 在 API 就緒前收到的 videoId
-
-// ── YouTube IFrame API 就緒回呼（API 自動呼叫這個函式）─────────────────
-function onYouTubeIframeAPIReady() {
-  console.log('[Receiver] YouTube IFrame API ready');
-  ytReady = true;
-  if (pendingId) {
-    loadVideo(pendingId);
-    pendingId = null;
-  }
-}
-
-// ── 建立 / 切換播放器 ──────────────────────────────────────────────────
+// ── 播放函式 ────────────────────────────────────────────────────────────────
 function loadVideo(videoId) {
+  if (videoId === currentVideoId) return;   // 同一個頻道不重複載入
+  currentVideoId = videoId;
+
   console.log('[Receiver] loadVideo:', videoId);
 
-  // 隱藏等待畫面，顯示播放器
+  // 隱藏等待畫面
   document.getElementById('waiting').style.display = 'none';
-  document.getElementById('player').style.display  = 'block';
 
-  if (ytPlayer) {
-    // 播放器已存在 → 直接換影片
-    ytPlayer.loadVideoById({ videoId: videoId });
-    return;
-  }
+  var frame = document.getElementById('ytFrame');
+  frame.style.display = 'block';
 
-  // 第一次建立播放器
-  ytPlayer = new YT.Player('player', {
-    width:   window.innerWidth,
-    height:  window.innerHeight,
-    videoId: videoId,
-    playerVars: {
-      autoplay:        1,
-      mute:            1,   // ★ 先靜音才能自動播放（瀏覽器政策）
-      controls:        0,   // 隱藏控制列
-      rel:             0,   // 不顯示相關影片
-      modestbranding:  1,
-      iv_load_policy:  3,   // 關閉資訊標注
-      playsinline:     1
-    },
-    events: {
-      onReady: function(e) {
-        console.log('[Receiver] Player ready → play');
-        e.target.playVideo();
-      },
-      onStateChange: function(e) {
-        if (e.data === YT.PlayerState.PLAYING) {
-          // ★ 真正開始播放後立即取消靜音
-          e.target.unMute();
-          e.target.setVolume(100);
-          console.log('[Receiver] Unmuted');
-        }
-        // 若被瀏覽器暫停，強制繼續
-        if (e.data === YT.PlayerState.PAUSED) {
-          setTimeout(function() {
-            if (ytPlayer) ytPlayer.playVideo();
-          }, 500);
-        }
-      },
-      onError: function(e) {
-        console.error('[Receiver] Player error:', e.data);
-      }
-    }
-  });
+  // 設定 iframe src：autoplay=1, mute=1（靜音自動播放），enablejsapi=1（允許 postMessage）
+  var params = [
+    'autoplay=1',
+    'mute=1',
+    'controls=0',
+    'rel=0',
+    'modestbranding=1',
+    'iv_load_policy=3',
+    'playsinline=1',
+    'enablejsapi=1',
+    'origin=' + encodeURIComponent(location.origin)
+  ].join('&');
+
+  frame.src = 'https://www.youtube.com/embed/' + videoId + '?' + params;
+
+  // 清掉舊計時器
+  if (unmuteTimer) clearTimeout(unmuteTimer);
+
+  // ★ 2 秒後取消靜音（用 postMessage，不依賴 IFrame API）
+  unmuteTimer = setTimeout(function() {
+    unmute();
+  }, 2000);
 }
 
-// ── Cast Receiver 訊息處理 ─────────────────────────────────────────────
-const context = cast.framework.CastReceiverContext.getInstance();
+// ── 取消靜音（postMessage to YouTube iframe）────────────────────────────────
+function unmute() {
+  var frame = document.getElementById('ytFrame');
+  if (!frame || !frame.contentWindow) return;
+
+  console.log('[Receiver] Unmuting via postMessage');
+
+  // unMute
+  frame.contentWindow.postMessage(JSON.stringify({
+    event: 'command', func: 'unMute', args: []
+  }), '*');
+
+  // setVolume 100
+  setTimeout(function() {
+    frame.contentWindow.postMessage(JSON.stringify({
+      event: 'command', func: 'setVolume', args: [100]
+    }), '*');
+
+    // playVideo（以防萬一被暫停）
+    setTimeout(function() {
+      frame.contentWindow.postMessage(JSON.stringify({
+        event: 'command', func: 'playVideo', args: []
+      }), '*');
+    }, 300);
+  }, 300);
+}
+
+// ── 監聽 YouTube iframe 的狀態訊息 ──────────────────────────────────────────
+window.addEventListener('message', function(e) {
+  try {
+    var data = JSON.parse(e.data);
+    // info.playerState: -1=unstarted, 0=ended, 1=playing, 2=paused, 3=buffering
+    if (data.info && data.info.playerState === 2) {
+      // 被暫停 → 重新播放 + 取消靜音
+      console.log('[Receiver] Paused detected, resuming...');
+      setTimeout(function() { unmute(); }, 500);
+    }
+  } catch(err) {}
+});
+
+// ── Cast Receiver ────────────────────────────────────────────────────────────
+var context = cast.framework.CastReceiverContext.getInstance();
 
 context.addCustomMessageListener(NAMESPACE, function(event) {
   var data = event.data;
   console.log('[Receiver] Message:', JSON.stringify(data));
-
   if (data.type === 'playVideo' && data.videoId) {
-    if (ytReady) {
-      loadVideo(data.videoId);
-    } else {
-      // API 還沒就緒，先存起來
-      pendingId = data.videoId;
-    }
+    loadVideo(data.videoId);
   }
 });
 
-context.start({
-  touchScreenOptimizedApp: false,
-  maxInactivity: 3600
-});
+context.start({ touchScreenOptimizedApp: false, maxInactivity: 3600 });
 </script>
 </body>
 </html>
