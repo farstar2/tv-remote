@@ -1,142 +1,227 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
+
 <head>
-<meta charset="utf-8">
-<title>TV 遙控器</title>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: #000; width: 100vw; height: 100vh; overflow: hidden; }
+  <meta charset="utf-8">
+  <title>TV 遙控器</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
 
-  #waiting {
-    display: flex; flex-direction: column;
-    align-items: center; justify-content: center;
-    width: 100vw; height: 100vh;
-    background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 100%);
-    color: #fff; font-family: sans-serif;
-    transition: opacity 0.5s;
-  }
-  #waiting .icon { font-size: 5rem; margin-bottom: 1rem; }
-  #waiting h1   { font-size: 2.5rem; margin-bottom: 0.5rem; }
-  #waiting p    { font-size: 1.3rem; color: rgba(255,255,255,0.5); }
+    body {
+      background: #000;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+    }
 
-  #ytFrame {
-    display: none;
-    position: fixed;
-    top: 0; left: 0;
-    width: 100vw; height: 100vh;
-    border: none;
-  }
-</style>
-<script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+    #waiting {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      width: 100vw;
+      height: 100vh;
+      background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 100%);
+      color: #fff;
+      font-family: sans-serif;
+    }
+
+    #waiting .icon {
+      font-size: 5rem;
+      margin-bottom: 1rem;
+    }
+
+    #waiting h1 {
+      font-size: 2.5rem;
+      margin-bottom: 0.5rem;
+    }
+
+    #waiting p {
+      font-size: 1.3rem;
+      color: rgba(255, 255, 255, 0.5);
+    }
+
+    #player {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    #player iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+  </style>
+  <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+  <script src="https://www.youtube.com/iframe_api"></script>
 </head>
+
 <body>
 
-<div id="waiting">
-  <div class="icon">📺</div>
-  <h1>TV 遙控器(V1.02)</h1>
-  <p>等待播放指令...</p>
-</div>
+  <div id="waiting">
+    <div class="icon">📺</div>
+    <h1>TV 遙控器(V1.03)</h1>
+    <p>等待播放指令...</p>
+  </div>
+  <div id="player"></div>
 
-<!-- YouTube embed iframe（用 src 控制，不用 IFrame API） -->
-<iframe id="ytFrame"
-  allow="autoplay; fullscreen; encrypted-media"
-  allowfullscreen>
-</iframe>
+  <script>
+    // ── 設定 ──────────────────────────────────────────────────────────────────
+    var NAMESPACE = 'urn:x-cast:com.example.tvremote';
 
-<script>
-const NAMESPACE = 'urn:x-cast:com.example.tvremote';
-var currentVideoId = null;
-var unmuteTimer    = null;
+    // ── 狀態 ──────────────────────────────────────────────────────────────────
+    var ytPlayer = null;
+    var ytReady = false;
+    var pendingId = null;
+    var retryTimer = null;
 
-// ── 播放函式 ────────────────────────────────────────────────────────────────
-function loadVideo(videoId) {
-  if (videoId === currentVideoId) return;   // 同一個頻道不重複載入
-  currentVideoId = videoId;
-
-  console.log('[Receiver] loadVideo:', videoId);
-
-  // 隱藏等待畫面
-  document.getElementById('waiting').style.display = 'none';
-
-  var frame = document.getElementById('ytFrame');
-  frame.style.display = 'block';
-
-  // 設定 iframe src：autoplay=1, mute=1（靜音自動播放），enablejsapi=1（允許 postMessage）
-  var params = [
-    'autoplay=1',
-    'mute=1',
-    'controls=0',
-    'rel=0',
-    'modestbranding=1',
-    'iv_load_policy=3',
-    'playsinline=1',
-    'enablejsapi=1',
-    'origin=' + encodeURIComponent(location.origin)
-  ].join('&');
-
-  frame.src = 'https://www.youtube.com/embed/' + videoId + '?' + params;
-
-  // 清掉舊計時器
-  if (unmuteTimer) clearTimeout(unmuteTimer);
-
-  // ★ 2 秒後取消靜音（用 postMessage，不依賴 IFrame API）
-  unmuteTimer = setTimeout(function() {
-    unmute();
-  }, 2000);
-}
-
-// ── 取消靜音（postMessage to YouTube iframe）────────────────────────────────
-function unmute() {
-  var frame = document.getElementById('ytFrame');
-  if (!frame || !frame.contentWindow) return;
-
-  console.log('[Receiver] Unmuting via postMessage');
-
-  // unMute
-  frame.contentWindow.postMessage(JSON.stringify({
-    event: 'command', func: 'unMute', args: []
-  }), '*');
-
-  // setVolume 100
-  setTimeout(function() {
-    frame.contentWindow.postMessage(JSON.stringify({
-      event: 'command', func: 'setVolume', args: [100]
-    }), '*');
-
-    // playVideo（以防萬一被暫停）
-    setTimeout(function() {
-      frame.contentWindow.postMessage(JSON.stringify({
-        event: 'command', func: 'playVideo', args: []
-      }), '*');
-    }, 300);
-  }, 300);
-}
-
-// ── 監聽 YouTube iframe 的狀態訊息 ──────────────────────────────────────────
-window.addEventListener('message', function(e) {
-  try {
-    var data = JSON.parse(e.data);
-    // info.playerState: -1=unstarted, 0=ended, 1=playing, 2=paused, 3=buffering
-    if (data.info && data.info.playerState === 2) {
-      // 被暫停 → 重新播放 + 取消靜音
-      console.log('[Receiver] Paused detected, resuming...');
-      setTimeout(function() { unmute(); }, 500);
+    // ── 解鎖 autoplay：播一段無聲音頻（必須在 Cast session 建立後立即執行）──
+    function unlockAutoplay() {
+      try {
+        // 最短的合法 WAV（1 個 sample、靜音）
+        var ctx = new (window.AudioContext || window.webkitAudioContext)();
+        var buf = ctx.createBuffer(1, 1, 22050);
+        var src = ctx.createBufferSource();
+        src.buffer = buf;
+        src.connect(ctx.destination);
+        src.start(0);
+        console.log('[Receiver] AudioContext unlocked');
+      } catch (e) {
+        console.warn('[Receiver] AudioContext unlock failed:', e);
+      }
     }
-  } catch(err) {}
-});
 
-// ── Cast Receiver ────────────────────────────────────────────────────────────
-var context = cast.framework.CastReceiverContext.getInstance();
+    // ── YouTube IFrame API 就緒 ────────────────────────────────────────────────
+    function onYouTubeIframeAPIReady() {
+      console.log('[Receiver] YT IFrame API ready');
+      ytReady = true;
+      if (pendingId) {
+        createPlayer(pendingId);
+        pendingId = null;
+      }
+    }
 
-context.addCustomMessageListener(NAMESPACE, function(event) {
-  var data = event.data;
-  console.log('[Receiver] Message:', JSON.stringify(data));
-  if (data.type === 'playVideo' && data.videoId) {
-    loadVideo(data.videoId);
-  }
-});
+    // ── 建立 / 切換播放器 ─────────────────────────────────────────────────────
+    function createPlayer(videoId) {
+      console.log('[Receiver] createPlayer:', videoId);
 
-context.start({ touchScreenOptimizedApp: false, maxInactivity: 3600 });
-</script>
+      document.getElementById('waiting').style.display = 'none';
+      document.getElementById('player').style.display = 'block';
+
+      // 已有播放器 → 直接切換影片
+      if (ytPlayer) {
+        clearRetry();
+        ytPlayer.loadVideoById(videoId);
+        ytPlayer.setVolume(100);
+        ytPlayer.unMute();
+        scheduleRetry();
+        return;
+      }
+
+      // 第一次建立播放器
+      ytPlayer = new YT.Player('player', {
+        width: window.innerWidth,
+        height: window.innerHeight,
+        videoId: videoId,
+        playerVars: {
+          autoplay: 1,
+          mute: 0,   // 不靜音（依靠 AudioContext 解鎖）
+          controls: 0,
+          rel: 0,
+          modestbranding: 1,
+          iv_load_policy: 3,
+          playsinline: 1
+        },
+        events: {
+          onReady: function (e) {
+            console.log('[Receiver] onReady → play');
+            e.target.setVolume(100);
+            e.target.playVideo();
+            scheduleRetry();
+          },
+          onStateChange: function (e) {
+            console.log('[Receiver] state:', e.data);
+            if (e.data === YT.PlayerState.PLAYING) {
+              clearRetry();   // 已在播放，停止重試
+            }
+            if (e.data === YT.PlayerState.PAUSED ||
+              e.data === YT.PlayerState.UNSTARTED) {
+              // 被暫停或未啟動 → 強制播放
+              setTimeout(function () {
+                if (ytPlayer) {
+                  ytPlayer.setVolume(100);
+                  ytPlayer.unMute();
+                  ytPlayer.playVideo();
+                }
+              }, 300);
+            }
+          },
+          onError: function (e) {
+            console.error('[Receiver] error:', e.data);
+          }
+        }
+      });
+    }
+
+    // ── 定時重試播放（onStateChange 無法攔截所有情況）────────────────────────
+    function scheduleRetry() {
+      clearRetry();
+      var attempts = 0;
+      retryTimer = setInterval(function () {
+        attempts++;
+        if (!ytPlayer) return;
+        var state = ytPlayer.getPlayerState();
+        // state: -1=unstarted, 1=playing, 2=paused, 3=buffering, 5=cued
+        if (state !== 1 && state !== 3) {
+          console.log('[Receiver] retry play, state=' + state + ', attempt=' + attempts);
+          ytPlayer.setVolume(100);
+          ytPlayer.unMute();
+          ytPlayer.playVideo();
+        } else if (state === 1) {
+          // 已在播放，清掉計時器
+          clearRetry();
+        }
+        if (attempts >= 20) clearRetry();   // 最多重試 20 次（10 秒）
+      }, 500);
+    }
+
+    function clearRetry() {
+      if (retryTimer) { clearInterval(retryTimer); retryTimer = null; }
+    }
+
+    // ── Cast Receiver 設定 ────────────────────────────────────────────────────
+    var context = cast.framework.CastReceiverContext.getInstance();
+
+    // Cast session 建立後立即解鎖 autoplay
+    context.addEventListener(
+      cast.framework.system.EventType.READY,
+      function () {
+        console.log('[Receiver] Cast READY → unlockAutoplay');
+        unlockAutoplay();
+      }
+    );
+
+    context.addCustomMessageListener(NAMESPACE, function (event) {
+      var data = event.data;
+      console.log('[Receiver] msg:', JSON.stringify(data));
+
+      if (data.type === 'playVideo' && data.videoId) {
+        unlockAutoplay();   // 再解鎖一次以防萬一
+        if (ytReady) createPlayer(data.videoId);
+        else pendingId = data.videoId;
+      }
+    });
+
+    context.start({ touchScreenOptimizedApp: false, maxInactivity: 3600 });
+  </script>
 </body>
+
 </html>
